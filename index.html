@@ -476,7 +476,7 @@ function buildSystemPrompt(track, notes, genreMode, customGenre, idea, measured)
   }
 
   const trackLine = track ? `Reference track: "${track}"` : `No track name given — work only from the measured audio DNA and any notes below.`;
-  const searchLine = track && !measured ? `Research this using web search if you have that tool available.` : (track ? `You may use web search for context on genre/scene/vocal style, but do not override the measured BPM/key/energy above.` : `No web search needed — infer genre/scene/vocal style from the measured DNA and notes only.`);
+  const searchLine = track && !measured ? `Research this using web search if you have that tool available. Keep your research phase brief — a couple of searches at most — you have a limited token budget and the JSON answer at the end matters far more than showing your work.` : (track ? `You may use web search for context on genre/scene/vocal style, but do not override the measured BPM/key/energy above.` : `No web search needed — infer genre/scene/vocal style from the measured DNA and notes only.`);
 
   return `You are a music production analyst. ${trackLine} ${searchLine}
 ${measuredBlock}
@@ -491,7 +491,10 @@ Then produce two deliverables built from that DNA:
 1. A Suno-ready style prompt: a single dense comma-separated tag string (in the style of professional Suno prompts — specific instrumentation, production texture, groove description, emotional arc, no vague adjectives alone), incorporating the actual BPM/key language naturally where useful.
 2. A lyrics blueprint: bracketed song structure ([Intro: N bars — ...], [Verse 1: N bars — ...], [Chorus...], etc.) with brief direction notes per section (not full lyrics, just direction), matching the reference's structure and energy curve.
 
-Respond with ONLY valid JSON, no markdown fences, no preamble, in exactly this shape:
+CRITICAL RULE for the suno_prompt field: Suno's own filters reject or silently distort prompts that name a real artist, band, or song title. NEVER include the reference artist's name, band name, or the reference song's title anywhere in "suno_prompt" — describe only sound (genre, instrumentation, production texture, mood, era, scene) in your own words, never the act itself. This applies even when matching the reference's genre exactly. The "label_reference" field is fine to name a scene or label loosely (not used as a Suno input), but "suno_prompt" itself must be artist-name-free.
+
+CRITICAL RULE for output format: your entire response must be ONLY the JSON object below — no preamble, no markdown fences, no commentary before or after, no summary of your research. The JSON object must be the very last and only thing you output, complete and valid.
+
 {
   "bpm": "string",
   "key": "string",
@@ -509,7 +512,15 @@ Respond with ONLY valid JSON, no markdown fences, no preamble, in exactly this s
 }`;
 }
 
-async function callClaude(apiKey, systemPrompt){
+async function callClaude(apiKey, systemPrompt, skipSearch){
+  const body = {
+    model: "claude-sonnet-4-6",
+    max_tokens: 4096,
+    messages: [{ role: "user", content: systemPrompt }]
+  };
+  if(!skipSearch){
+    body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+  }
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -518,12 +529,7 @@ async function callClaude(apiKey, systemPrompt){
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true"
     },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2000,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: systemPrompt }]
-    })
+    body: JSON.stringify(body)
   });
   if(!res.ok){ throw new Error(`Claude API error ${res.status}`); }
   const data = await res.json();
@@ -540,6 +546,7 @@ async function callGroq(apiKey, systemPrompt){
     },
     body: JSON.stringify({
       model: "llama-3.3-70b-versatile",
+      max_tokens: 3000,
       messages: [{ role: "user", content: systemPrompt + "\n\nNote: you have no live search — base non-measured fields on training knowledge only, and set confidence to \"low\" or \"medium\" accordingly." }],
       temperature: 0.7
     })
@@ -658,24 +665,43 @@ async function runDecode(){
     }
   }
 
+  let dna;
   try{
-    const dna = extractJson(raw);
-    if(measured){
-      dna.bpm = String(measured.bpm);
-      dna.key = measured.key;
-    }
-    renderDna(dna, !!measured);
-    document.getElementById('sunoOut').value = dna.suno_prompt || '';
-    document.getElementById('lyricsOut').value = (dna.lyrics_blueprint || '').replace(/\\n/g, '\n');
-    document.getElementById('results').style.display = 'block';
-    if(measured){
-      sparkWrap.style.display = 'block';
-      drawSpark(measured.energyPoints);
-    }
-    setStatus(usedFallback ? 'Done — via Groq fallback for genre/structure (estimated, no live search).' : 'Done.');
+    dna = extractJson(raw);
   } catch(parseErr){
-    setStatus('Got a response but could not parse it as JSON: ' + parseErr.message, true);
+    // Retry once: drop web search so the whole token budget goes to the answer.
+    if(keyAnthropic && !usedFallback){
+      try{
+        setStatus('First reply got cut off — retrying without search...');
+        raw = await callClaude(keyAnthropic, systemPrompt, true);
+        dna = extractJson(raw);
+      } catch(retryErr){
+        setStatus('Still could not get valid JSON after a retry: ' + retryErr.message, true);
+        btn.disabled = false;
+        document.getElementById('meter').classList.remove('on');
+        return;
+      }
+    } else {
+      setStatus('Got a response but could not parse it as JSON: ' + parseErr.message, true);
+      btn.disabled = false;
+      document.getElementById('meter').classList.remove('on');
+      return;
+    }
   }
+
+  if(measured){
+    dna.bpm = String(measured.bpm);
+    dna.key = measured.key;
+  }
+  renderDna(dna, !!measured);
+  document.getElementById('sunoOut').value = dna.suno_prompt || '';
+  document.getElementById('lyricsOut').value = (dna.lyrics_blueprint || '').replace(/\\n/g, '\n');
+  document.getElementById('results').style.display = 'block';
+  if(measured){
+    sparkWrap.style.display = 'block';
+    drawSpark(measured.energyPoints);
+  }
+  setStatus(usedFallback ? 'Done — via Groq fallback for genre/structure (estimated, no live search).' : 'Done.');
 
   btn.disabled = false;
   document.getElementById('meter').classList.remove('on');
