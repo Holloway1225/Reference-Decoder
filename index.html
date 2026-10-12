@@ -53,10 +53,11 @@
   .modetab{flex:1; text-align:center; padding:10px; font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-dim); cursor:pointer; background:var(--panel-2);}
   .modetab.active{background:var(--amber); color:#0A0B0D; font-weight:700;}
 
-  .filedrop{border:1px dashed var(--line); border-radius:4px; padding:20px; text-align:center; margin-bottom:14px; cursor:pointer; font-size:13px; color:var(--text-dim);}
+  .filedrop{display:block; border:1px dashed var(--line); border-radius:4px; padding:20px; text-align:center; margin-bottom:14px; cursor:pointer; font-size:13px; color:var(--text-dim); text-transform:none; letter-spacing:normal;}
   .filedrop:hover{border-color:var(--amber); color:var(--text);}
   .filedrop.has-file{border-color:var(--signal); color:var(--signal); border-style:solid;}
-  #audioFile{display:none;}
+  /* Visually hidden but still tappable via its label (display:none can block iOS pickers) */
+  #audioFile{position:absolute; width:1px; height:1px; opacity:0; overflow:hidden; pointer-events:none;}
 
   button.primary{
     width:100%; background:var(--amber); color:#0A0B0D; border:none; border-radius:4px;
@@ -132,8 +133,8 @@
 
     <div id="uploadFields" style="display:none;">
       <label>Audio file</label>
-      <div class="filedrop" id="filedrop" onclick="document.getElementById('audioFile').click()">Tap to choose an audio file — analyzed locally in your browser, never uploaded anywhere</div>
-      <input type="file" id="audioFile" accept="audio/*">
+      <input type="file" id="audioFile" accept=".mp3,.m4a,.wav,.aac,.aif,.aiff,.flac,.ogg,.mp4,audio/*">
+      <label class="filedrop" id="filedrop" for="audioFile">Tap to choose an audio file — analyzed locally in your browser, never uploaded anywhere</label>
       <label>Track name (optional — helps fill in genre/context)</label>
       <input type="text" id="trackUpload" placeholder="e.g. Bring Me the Horizon — Doomed">
     </div>
@@ -212,6 +213,8 @@
 <script>
 const CRYPTID_BASE = "Melodic Glitch Metal, Haunting Cinematic Alternative Metal, Intimate Male Vocals, Whispered Low-Register Verses, Hypnotic Vocal Delivery, Slow-Building Tension, Electronic Textures, Mechanical Pulse, Dark Ambient Layers, Atmospheric Guitars, Sub-Bass Pressure, Spacious Drums, Eerie Room-Tone Ambience, Melancholy And Fascination Instead Of Rage, Chorus Opens Wider With Emotional Lift And Inevitability, Powerful But Restrained Hook, Cinematic Bridge With Rising Dread And Weightless Momentum, Massive Stereo Atmosphere, Immersive Production, Unsettling Beauty, Dark, Elegant, Hypnotic, Emotionally Consuming";
 
+const FILEDROP_DEFAULT = 'Tap to choose an audio file — analyzed locally in your browser, never uploaded anywhere';
+
 let currentMode = 'search';
 let selectedFile = null;
 
@@ -230,7 +233,7 @@ document.getElementById('audioFile').addEventListener('change', (e)=>{
     drop.textContent = `Selected: ${selectedFile.name}`;
     drop.classList.add('has-file');
   } else {
-    drop.textContent = 'Tap to choose an audio file — analyzed locally in your browser, never uploaded anywhere';
+    drop.textContent = FILEDROP_DEFAULT;
     drop.classList.remove('has-file');
   }
 });
@@ -389,8 +392,8 @@ function detectKey(monoSamples, sampleRate){
 
   let best = { score:-Infinity, name:'' };
   for(let rot=0; rot<12; rot++){
-    const majRot = KK_MAJOR.slice(rot).concat(KK_MAJOR.slice(0,rot));
-    const minRot = KK_MINOR.slice(rot).concat(KK_MINOR.slice(0,rot));
+    const majRot = KK_MAJOR.slice(12-rot).concat(KK_MAJOR.slice(0,12-rot));
+    const minRot = KK_MINOR.slice(12-rot).concat(KK_MINOR.slice(0,12-rot));
     const scoreMaj = correlate(chromaNorm, majRot);
     const scoreMin = correlate(chromaNorm, minRot);
     if(scoreMaj > best.score) best = { score: scoreMaj, name: PITCH_NAMES[rot] + ' major' };
@@ -442,11 +445,29 @@ function drawSpark(points){
   ctx.stroke();
 }
 
+// Works with both the promise form (modern browsers) and the callback-only form (older iOS Safari)
+function decodeAudio(ctx, arrayBuffer){
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const ok = buf => { if(!settled){ settled = true; resolve(buf); } };
+    const fail = err => { if(!settled){ settled = true; reject(err || new Error('This browser could not decode that file format — try MP3, M4A or WAV')); } };
+    try{
+      const p = ctx.decodeAudioData(arrayBuffer, ok, fail);
+      if(p && typeof p.then === 'function') p.then(ok, fail);
+    } catch(e){ fail(e); }
+  });
+}
+
 async function analyzeAudioFile(file){
   const arrayBuffer = await file.arrayBuffer();
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   const ctx = new AudioCtx();
-  const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+  let audioBuffer;
+  try{
+    audioBuffer = await decodeAudio(ctx, arrayBuffer);
+  } finally {
+    try{ ctx.close(); } catch(e){}
+  }
   const mono = toMono(audioBuffer);
   const sampleRate = audioBuffer.sampleRate;
 
@@ -454,7 +475,6 @@ async function analyzeAudioFile(file){
   const key = detectKey(mono, sampleRate);
   const energy = detectEnergyCurve(mono, sampleRate, 60);
 
-  ctx.close();
   return { bpm, key, energyShape: energy.shape, energyPoints: energy.points, durationSec: Math.round(audioBuffer.duration) };
 }
 
@@ -610,7 +630,7 @@ async function runDecode(){
     try{
       measured = await analyzeAudioFile(selectedFile);
     } catch(err){
-      setStatus('Could not analyze that audio file: ' + err.message, true);
+      setStatus('Could not analyze that audio file: ' + (err && err.message ? err.message : 'unsupported format — try MP3, M4A or WAV'), true);
       btn.disabled = false;
       document.getElementById('meter').classList.remove('on');
       return;
