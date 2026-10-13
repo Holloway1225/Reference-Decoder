@@ -75,19 +75,6 @@
   .status{font-size:12px; color:var(--text-dim); margin-top:10px; min-height:16px;}
   .status.err{color:var(--amber);}
 
-  .dna-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-bottom:16px;}
-  .dna-cell{background:var(--panel); padding:14px 16px;}
-  .dna-cell.full{grid-column:1 / -1;}
-  .dna-cell .k{font-size:10px; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-dim); margin-bottom:4px;}
-  .dna-cell .v{font-size:15px; color:var(--text);}
-  .dna-cell .v.big{font-family:var(--display); font-size:26px; color:var(--amber); font-weight:700;}
-  .conf{display:inline-block; font-size:10px; padding:2px 7px; border-radius:3px; letter-spacing:0.06em; text-transform:uppercase; margin-left:6px;}
-  .conf.high, .conf.measured{background:rgba(61,220,151,0.15); color:var(--signal);}
-  .conf.medium{background:rgba(255,106,61,0.15); color:var(--amber);}
-  .conf.low{background:rgba(139,141,146,0.15); color:var(--text-dim);}
-
-  .sparkwrap{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px 16px; margin-bottom:16px;}
-  canvas#energySpark{width:100%; height:60px; display:block;}
 
   .out-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;}
   .out-head label{margin:0;}
@@ -115,7 +102,7 @@
   <header>
     <div>
       <h1>REFERENCE<br><span>DECODER</span></h1>
-      <div class="tag">Track DNA → Suno prompt + lyrics blueprint</div>
+      <div class="tag">Reference track → Suno prompt + meta tags</div>
     </div>
     <button class="gear" onclick="openSettings()">⚙ KEYS</button>
   </header>
@@ -168,13 +155,6 @@
   </div>
 
   <div id="results" style="display:none;">
-    <div class="dna-grid" id="dnaGrid"></div>
-
-    <div class="sparkwrap" id="sparkWrap" style="display:none;">
-      <div class="k" style="font-size:10px; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-dim); margin-bottom:8px;">Energy curve (measured)</div>
-      <canvas id="energySpark" width="700" height="60"></canvas>
-    </div>
-
     <div class="panel">
       <div class="out-head">
         <label>Suno prompt (paste into style box)</label>
@@ -185,10 +165,10 @@
 
     <div class="panel">
       <div class="out-head">
-        <label>Lyrics blueprint</label>
+        <label>Meta tags (paste into lyrics box, add lyrics under each)</label>
         <button class="copybtn" onclick="copyText('lyricsOut', this)">Copy</button>
       </div>
-      <textarea class="outtext" id="lyricsOut" rows="10" readonly></textarea>
+      <textarea class="outtext" id="lyricsOut" rows="14" readonly></textarea>
     </div>
   </div>
 
@@ -198,7 +178,7 @@
 <div class="modal-bg" id="modalBg">
   <div class="modal">
     <h2>API Keys</h2>
-    <div class="note">Claude is used first (it can search the web for the reference track). Groq is the fallback if no Claude key is set or the call fails — it estimates from training knowledge only, no live search. Either key is only needed to write the genre/structure/lyrics side — audio analysis itself needs no key.</div>
+    <div class="note">Claude is used first (it can search the web for the reference track). Groq is the fallback if no Claude key is set or the call fails — it estimates from training knowledge only, no live search. Either key is only needed to write the Suno prompt and meta tags — audio analysis itself needs no key.</div>
     <label>Anthropic API key</label>
     <input type="text" id="keyAnthropic" placeholder="sk-ant-...">
     <label>Groq API key (optional fallback)</label>
@@ -428,22 +408,6 @@ function detectEnergyCurve(monoSamples, sampleRate, points){
   return { points: norm, shape, totalSec };
 }
 
-function drawSpark(points){
-  const canvas = document.getElementById('energySpark');
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width, h = canvas.height;
-  ctx.clearRect(0,0,w,h);
-  if(!points.length) return;
-  ctx.strokeStyle = '#FF6A3D';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  points.forEach((v, i)=>{
-    const x = (i/(points.length-1||1)) * w;
-    const y = h - (v * (h-6)) - 3;
-    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-  });
-  ctx.stroke();
-}
 
 // Works with both the promise form (modern browsers) and the callback-only form (older iOS Safari)
 function decodeAudio(ctx, arrayBuffer){
@@ -500,35 +464,24 @@ function buildSystemPrompt(track, notes, genreMode, customGenre, idea, measured)
 
   return `You are a music production analyst. ${trackLine} ${searchLine}
 ${measuredBlock}
-Identify (or fill in around the measured values) the track's genre, sub-genre lineage, defining sonic element, groove/rhythm character, energy curve description, emotional arc, vocal style, and a label/scene reference if relevant. If you're inferring rather than measuring/finding real data, say so honestly in your confidence rating rather than inventing specifics.
+Work out the track's genre, defining sonic elements, groove, energy curve, vocal style and song structure internally — do NOT output that analysis. Only output the two deliverables below.
 
 ${notes ? `The user's own notes on why this track is the reference: ${notes}` : ''}
 ${idea ? `The song they want to write is about: ${idea}` : ''}
 
 ${genreInstruction}
 
-Then produce two deliverables built from that DNA:
-1. A Suno-ready style prompt: a single dense comma-separated tag string (in the style of professional Suno prompts — specific instrumentation, production texture, groove description, emotional arc, no vague adjectives alone), incorporating the actual BPM/key language naturally where useful.
-2. A lyrics blueprint: bracketed song structure ([Intro: N bars — ...], [Verse 1: N bars — ...], [Chorus...], etc.) with brief direction notes per section (not full lyrics, just direction), matching the reference's structure and energy curve.
+Deliverables:
+1. "suno_prompt": a Suno style-box prompt — a single dense comma-separated tag string (specific instrumentation, production texture, groove, vocal style, emotional arc; no vague adjectives on their own), including BPM and key where useful. HARD LIMIT: under 950 characters total, because Suno's style box cuts off at 1000.
+2. "meta_tags": a Suno lyrics-box scaffold that follows the reference's structure and energy curve. Use Suno-recognized section tags ([Intro], [Verse 1], [Pre-Chorus], [Chorus], [Verse 2], [Bridge], [Breakdown], [Final Chorus], [Outro], [End], or instrumental tags like [Guitar Solo] / [Build] / [Drop] where fitting). Each section tag goes on its own line, followed on the next line by ONE short performance-cue tag in brackets (2–5 words, e.g. [Whispered, close-mic] or [Full band, wide and lifted]). After each cue, leave one empty line where the user will write lyrics. No lyrics, no bar counts, no prose explanations. End with [End].
 
-CRITICAL RULE for the suno_prompt field: Suno's own filters reject or silently distort prompts that name a real artist, band, or song title. NEVER include the reference artist's name, band name, or the reference song's title anywhere in "suno_prompt" — describe only sound (genre, instrumentation, production texture, mood, era, scene) in your own words, never the act itself. This applies even when matching the reference's genre exactly. The "label_reference" field is fine to name a scene or label loosely (not used as a Suno input), but "suno_prompt" itself must be artist-name-free.
+CRITICAL RULE: Suno's filters reject or silently distort prompts that name a real artist, band, or song title. NEVER include the reference artist's name, band name, or song title anywhere in either field — describe only sound in your own words.
 
-CRITICAL RULE for output format: your entire response must be ONLY the JSON object below — no preamble, no markdown fences, no commentary before or after, no summary of your research. The JSON object must be the very last and only thing you output, complete and valid.
+CRITICAL RULE for output format: your entire response must be ONLY the JSON object below — no preamble, no markdown fences, no commentary before or after, no summary of your research.
 
 {
-  "bpm": "string",
-  "key": "string",
-  "genre": "string",
-  "subgenre_stack": "string",
-  "defining_element": "string",
-  "groove": "string",
-  "energy": "string",
-  "emotional_arc": "string",
-  "vocal_style": "string",
-  "label_reference": "string",
-  "confidence": "high | medium | low",
   "suno_prompt": "string",
-  "lyrics_blueprint": "string with \\n line breaks"
+  "meta_tags": "string with \\n line breaks"
 }`;
 }
 
@@ -567,7 +520,7 @@ async function callGroq(apiKey, systemPrompt){
     body: JSON.stringify({
       model: "llama-3.3-70b-versatile",
       max_tokens: 3000,
-      messages: [{ role: "user", content: systemPrompt + "\n\nNote: you have no live search — base non-measured fields on training knowledge only, and set confidence to \"low\" or \"medium\" accordingly." }],
+      messages: [{ role: "user", content: systemPrompt + "\n\nNote: you have no live search — base non-measured fields on training knowledge only,." }],
       temperature: 0.7
     })
   });
@@ -584,25 +537,6 @@ function extractJson(raw){
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-function renderDna(d, measured){
-  const grid = document.getElementById('dnaGrid');
-  const confClass = (d.confidence || 'low').toLowerCase();
-  const bpmBadge = measured ? '<span class="conf measured">measured</span>' : '';
-  const keyBadge = measured ? '<span class="conf measured">measured</span>' : '';
-  grid.innerHTML = `
-    <div class="dna-cell"><div class="k">BPM</div><div class="v big">${escapeHtml(d.bpm)}${bpmBadge}</div></div>
-    <div class="dna-cell"><div class="k">Key</div><div class="v big">${escapeHtml(d.key)}${keyBadge}</div></div>
-    <div class="dna-cell full"><div class="k">Genre</div><div class="v">${escapeHtml(d.genre)}</div></div>
-    <div class="dna-cell full"><div class="k">Sub-genre stack</div><div class="v">${escapeHtml(d.subgenre_stack)}</div></div>
-    <div class="dna-cell full"><div class="k">Defining element</div><div class="v">${escapeHtml(d.defining_element)}</div></div>
-    <div class="dna-cell"><div class="k">Groove</div><div class="v">${escapeHtml(d.groove)}</div></div>
-    <div class="dna-cell"><div class="k">Energy</div><div class="v">${escapeHtml(d.energy)}</div></div>
-    <div class="dna-cell full"><div class="k">Emotional arc</div><div class="v">${escapeHtml(d.emotional_arc)}</div></div>
-    <div class="dna-cell"><div class="k">Vocal style</div><div class="v">${escapeHtml(d.vocal_style)}</div></div>
-    <div class="dna-cell"><div class="k">Label reference</div><div class="v">${escapeHtml(d.label_reference)}</div></div>
-    <div class="dna-cell full"><div class="k">Source confidence (genre/structure)</div><div class="v"><span class="conf ${confClass}">${escapeHtml(d.confidence)}</span></div></div>
-  `;
-}
 
 function escapeHtml(s){
   if(s === undefined || s === null) return '—';
@@ -618,8 +552,6 @@ async function runDecode(){
   let track, measured = null;
 
   const btn = document.getElementById('runBtn');
-  const sparkWrap = document.getElementById('sparkWrap');
-  sparkWrap.style.display = 'none';
 
   if(currentMode === 'upload'){
     if(!selectedFile){ setStatus('Choose an audio file first.', true); return; }
@@ -709,19 +641,17 @@ async function runDecode(){
     }
   }
 
-  if(measured){
-    dna.bpm = String(measured.bpm);
-    dna.key = measured.key;
+  let suno = (dna.suno_prompt || '').trim();
+  if(suno.length > 1000){
+    // Trim at the last full tag that fits Suno's 1000-char style box
+    suno = suno.slice(0, 1000);
+    const cut = suno.lastIndexOf(',');
+    if(cut > 0) suno = suno.slice(0, cut);
   }
-  renderDna(dna, !!measured);
-  document.getElementById('sunoOut').value = dna.suno_prompt || '';
-  document.getElementById('lyricsOut').value = (dna.lyrics_blueprint || '').replace(/\\n/g, '\n');
+  document.getElementById('sunoOut').value = suno;
+  document.getElementById('lyricsOut').value = (dna.meta_tags || '').replace(/\\n/g, '\n');
   document.getElementById('results').style.display = 'block';
-  if(measured){
-    sparkWrap.style.display = 'block';
-    drawSpark(measured.energyPoints);
-  }
-  setStatus(usedFallback ? 'Done — via Groq fallback for genre/structure (estimated, no live search).' : 'Done.');
+  setStatus((usedFallback ? 'Done — via Groq fallback (no live search).' : 'Done.') + ` Style prompt: ${suno.length}/1000 chars.`);
 
   btn.disabled = false;
   document.getElementById('meter').classList.remove('on');
